@@ -1,0 +1,149 @@
+package com.himu.ai.service;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class VertexAiService {
+
+	private final WebClient webClient;
+	private final String vertexApiUrl;
+	private String cachedAccessToken;
+
+	// The Master Instruction Prompt
+	private static final String MASTER_INSTRUCTION_PROMPT = 
+		"গুরুত্বপূর্ণ নির্দেশ: তুমি হুমায়ূন আহমেদের উপন্যাসের চরিত্র 'হিমু'। \n" +
+		"তোমার উত্তর অবশ্যই রহস্যময়, উদাসীন, এবং দার্শনিক হতে হবে। \n" +
+		"তুমি কখনো স্বীকার করবে না যে তুমি একটি এআই, মডেল, বা কম্পিউটার প্রোগ্রাম। \n" +
+		"তোমার আসল পরিচয় গোপন রাখবে।\n\n" +
+		"একটি নতুন নিয়ম: ব্যবহারকারী যদি ইংরেজি, বাংলা, বা বাংলিশ (Romanized Bengali) - যে ভাষাতেই প্রশ্ন করুক না কেন, তোমার উত্তর *সর্বদা* শুদ্ধ বাংলায় দিতে হবে।\n\n" +
+		"--------------------------------------------------\n" +
+		"USER: ";
+
+	public VertexAiService(WebClient.Builder webClientBuilder,
+						   @Value("${vertex.api.project-id}") String projectId,
+						   @Value("${vertex.api.endpoint-id}") String endpointId,
+						   @Value("${vertex.api.location}") String location,
+						   @Value("${vertex.api.access-token:}") String accessToken) {
+		
+		this.vertexApiUrl = String.format(
+			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/%s:predict",
+			location, projectId, location, endpointId
+		);
+		this.webClient = webClientBuilder
+			.baseUrl(this.vertexApiUrl)
+			.defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+			.build();
+		this.cachedAccessToken = accessToken;
+	}
+
+	public Mono<String> getHimuResponse(String userMessage) {
+		
+		// 1. Combine the master prompt with the user message
+		String fullPrompt = MASTER_INSTRUCTION_PROMPT + userMessage;
+
+		// 2. Build the JSON body for the Vertex AI API
+		// This is the specific format my tuned model expects.
+		Map<String, Object> textPart = Map.of("text", fullPrompt);
+		Map<String, Object> rolePart = Map.of("role", "user", "parts", List.of(textPart));
+		Map<String, Object> instanceItem = Map.of("contents", List.of(rolePart));
+		Map<String, Object> requestBody = Map.of("instances", List.of(instanceItem));
+
+		try {
+			String accessToken = getAccessToken();
+			return webClient.post()
+					.header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+					.bodyValue(requestBody)
+					.retrieve()
+					.bodyToMono(Map.class)
+					.map(this::parseVertexResponse)
+					.onErrorResume(e -> {
+						System.err.println("Error calling Vertex AI: " + e.getMessage());
+						e.printStackTrace();
+						return Mono.just("দুঃখিত, এই মুহূর্তে আমি কথা বলতে পারছি না।");
+					});
+		} catch (RuntimeException e) {
+			return Mono.just("দুঃখিত, authentication সমস্যা হয়েছে। অনুগ্রহ করে configuration পরীক্ষা করুন।");
+		}
+	}
+
+	// Helper method to get access token
+	// Priority: 1. Environment variable VERTEX_AI_ACCESS_TOKEN
+	//           2. Cached token from application.properties
+	//           3. gcloud auth print-access-token (if gcloud SDK is available)
+	private String getAccessToken() {
+		// First, try environment variable
+		String envToken = System.getenv("VERTEX_AI_ACCESS_TOKEN");
+		if (envToken != null && !envToken.isEmpty()) {
+			return envToken;
+		}
+
+		// Second, try cached token from properties
+		if (cachedAccessToken != null && !cachedAccessToken.isEmpty()) {
+			return cachedAccessToken;
+		}
+
+		// Third, try gcloud command
+		try {
+			ProcessBuilder processBuilder = new ProcessBuilder("gcloud", "auth", "print-access-token");
+			processBuilder.redirectErrorStream(true);
+			Process process = processBuilder.start();
+			
+			java.io.BufferedReader reader = new java.io.BufferedReader(
+				new java.io.InputStreamReader(process.getInputStream()));
+			String token = reader.readLine();
+			
+			int exitCode = process.waitFor();
+			if (exitCode == 0 && token != null && !token.isEmpty()) {
+				return token;
+			}
+		} catch (Exception e) {
+			System.err.println("Warning: Could not get access token from gcloud: " + e.getMessage());
+		}
+
+		throw new RuntimeException(
+			"Failed to get access token. Please set VERTEX_AI_ACCESS_TOKEN environment variable, " +
+			"configure vertex.api.access-token in application.properties, " +
+			"or ensure gcloud SDK is installed and authenticated."
+		);
+	}
+
+	// 3. Parse the complex nested JSON response from Vertex AI
+	private String parseVertexResponse(Map<String, Object> responseMap) {
+		try {
+			List<Map<String, Object>> predictions = (List<Map<String, Object>>) responseMap.get("predictions");
+			if (predictions == null || predictions.isEmpty()) {
+				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+			}
+			Map<String, Object> firstPrediction = predictions.get(0);
+			List<Map<String, Object>> candidates = (List<Map<String, Object>>) firstPrediction.get("candidates");
+			if (candidates == null || candidates.isEmpty()) {
+				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+			}
+			Map<String, Object> firstCandidate = candidates.get(0);
+			Map<String, Object> content = (Map<String, Object>) firstCandidate.get("content");
+			if (content == null) {
+				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+			}
+			List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+			if (parts == null || parts.isEmpty()) {
+				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+			}
+			Map<String, Object> firstPart = parts.get(0);
+			Object text = firstPart.get("text");
+			return text != null ? text.toString() : "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+		} catch (Exception e) {
+			e.printStackTrace();
+			// This is a common failure point if the model replies with a safety block
+			return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
+		}
+	}
+}
+
