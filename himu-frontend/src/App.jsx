@@ -1,38 +1,41 @@
-import { useState } from 'react';
+import { useState } from "react";
 
 function App() {
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim()) return;
 
-    const userMessage = { sender: 'user', text: input };
+    const userMessage = { sender: "user", text: input };
     setMessages((prev) => [...prev, userMessage]);
-    setInput('');
+    setInput("");
 
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8080/api/chat', {
-        method: 'POST',
+      const response = await fetch("http://localhost:8080/api/chat", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ message: input }),
       });
 
       if (!response.ok) {
-        throw new Error('Backend server error');
+        throw new Error("Backend server error");
       }
 
       const data = await response.json();
-      const himuMessage = { sender: 'himu', text: data.reply };
+      const himuMessage = { sender: "himu", text: data.reply };
       setMessages((prev) => [...prev, himuMessage]);
     } catch (error) {
-      const errorMessage = { sender: 'himu', text: 'আমার সাথে কথা বলতে সমস্যা হচ্ছে। পরে চেষ্টা করুন।' };
+      const errorMessage = {
+        sender: "himu",
+        text: "আমার সাথে কথা বলতে সমস্যা হচ্ছে। পরে চেষ্টা করুন।",
+      };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -41,8 +44,10 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen max-w-2xl mx-auto p-4">
-      <h1 className="text-3xl font-bold text-center text-yellow-400 p-4">হিমুর সাথে কথা বলুন</h1>
-      
+      <h1 className="text-3xl font-bold text-center text-yellow-400 p-4">
+        হিমুর সাথে কথা বলুন
+      </h1>
+
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 p-4 bg-gray-800 rounded-lg shadow-inner">
         {messages.length === 0 && (
@@ -51,10 +56,17 @@ function App() {
           </div>
         )}
         {messages.map((msg, index) => (
-          <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div
+            key={index}
+            className={`flex ${
+              msg.sender === "user" ? "justify-end" : "justify-start"
+            }`}
+          >
             <div
               className={`p-3 rounded-lg max-w-xs md:max-w-md ${
-                msg.sender === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-white'
+                msg.sender === "user"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-700 text-white"
               }`}
             >
               {msg.text}
@@ -93,4 +105,3 @@ function App() {
 }
 
 export default App;
-
