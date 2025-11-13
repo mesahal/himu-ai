@@ -17,7 +17,11 @@ public class ChatController {
 
 	@PostMapping("/chat")
 	public Mono<ChatResponse> chatWithHimu(@RequestBody ChatRequest chatRequest) {
-		return vertexAiService.getHimuResponse(chatRequest.getMessage())
+		String model = chatRequest.getModel();
+		if (model == null || model.isEmpty()) {
+			model = "himu-1"; // Default to himu-1
+		}
+		return vertexAiService.getHimuResponse(chatRequest.getMessage(), model)
 				.map(ChatResponse::new);
 	}
 }

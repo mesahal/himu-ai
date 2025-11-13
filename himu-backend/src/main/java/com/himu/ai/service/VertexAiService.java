@@ -14,7 +14,10 @@ import java.util.Map;
 public class VertexAiService {
 
 	private final WebClient webClient;
-	private final String vertexApiUrl;
+	private final String projectId;
+	private final String location;
+	private final String himu1EndpointId;
+	private final String himu2EndpointId;
 	private String cachedAccessToken;
 
 	// The Master Instruction Prompt
@@ -29,22 +32,38 @@ public class VertexAiService {
 
 	public VertexAiService(WebClient.Builder webClientBuilder,
 						   @Value("${vertex.api.project-id}") String projectId,
-						   @Value("${vertex.api.endpoint-id}") String endpointId,
+						   @Value("${vertex.api.endpoint-id.himu-1}") String himu1EndpointId,
+						   @Value("${vertex.api.endpoint-id.himu-2}") String himu2EndpointId,
 						   @Value("${vertex.api.location}") String location,
 						   @Value("${vertex.api.access-token:}") String accessToken) {
 		
-		// Use generateContent endpoint format
-		this.vertexApiUrl = String.format(
-			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/%s:generateContent",
-			location, projectId, location, endpointId
-		);
+		this.projectId = projectId;
+		this.location = location;
+		this.himu1EndpointId = himu1EndpointId;
+		this.himu2EndpointId = himu2EndpointId;
 		this.webClient = webClientBuilder
 			.defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
 			.build();
 		this.cachedAccessToken = accessToken;
 	}
+	
+	// Helper method to get endpoint URL based on model selection
+	private String getEndpointUrl(String model) {
+		String endpointId;
+		if ("himu-2".equalsIgnoreCase(model)) {
+			endpointId = himu2EndpointId;
+		} else {
+			// Default to himu-1
+			endpointId = himu1EndpointId;
+		}
+		
+		return String.format(
+			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/%s:generateContent",
+			location, projectId, location, endpointId
+		);
+	}
 
-	public Mono<String> getHimuResponse(String userMessage) {
+	public Mono<String> getHimuResponse(String userMessage, String model) {
 		
 		// 1. Combine the master prompt with the user message
 		String fullPrompt = MASTER_INSTRUCTION_PROMPT + userMessage;
@@ -55,10 +74,13 @@ public class VertexAiService {
 		Map<String, Object> rolePart = Map.of("role", "user", "parts", List.of(textPart));
 		Map<String, Object> requestBody = Map.of("contents", List.of(rolePart));
 
+		// 3. Get the appropriate endpoint URL based on model selection
+		String endpointUrl = getEndpointUrl(model);
+
 		try {
 			String accessToken = getAccessToken();
 			return webClient.post()
-					.uri(vertexApiUrl)
+					.uri(endpointUrl)
 					.header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
 					.bodyValue(requestBody)
 					.retrieve()
