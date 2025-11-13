@@ -33,12 +33,12 @@ public class VertexAiService {
 						   @Value("${vertex.api.location}") String location,
 						   @Value("${vertex.api.access-token:}") String accessToken) {
 		
+		// Use generateContent endpoint format
 		this.vertexApiUrl = String.format(
-			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/%s:predict",
+			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/endpoints/%s:generateContent",
 			location, projectId, location, endpointId
 		);
 		this.webClient = webClientBuilder
-			.baseUrl(this.vertexApiUrl)
 			.defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
 			.build();
 		this.cachedAccessToken = accessToken;
@@ -49,16 +49,16 @@ public class VertexAiService {
 		// 1. Combine the master prompt with the user message
 		String fullPrompt = MASTER_INSTRUCTION_PROMPT + userMessage;
 
-		// 2. Build the JSON body for the Vertex AI API
-		// This is the specific format my tuned model expects.
+		// 2. Build the JSON body for the Vertex AI generateContent API
+		// Format: { "contents": [ { "role": "user", "parts": [ { "text": "..." } ] } ] }
 		Map<String, Object> textPart = Map.of("text", fullPrompt);
 		Map<String, Object> rolePart = Map.of("role", "user", "parts", List.of(textPart));
-		Map<String, Object> instanceItem = Map.of("contents", List.of(rolePart));
-		Map<String, Object> requestBody = Map.of("instances", List.of(instanceItem));
+		Map<String, Object> requestBody = Map.of("contents", List.of(rolePart));
 
 		try {
 			String accessToken = getAccessToken();
 			return webClient.post()
+					.uri(vertexApiUrl)
 					.header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
 					.bodyValue(requestBody)
 					.retrieve()
@@ -79,10 +79,15 @@ public class VertexAiService {
 	//           2. Cached token from application.properties
 	//           3. gcloud auth print-access-token (if gcloud SDK is available)
 	private String getAccessToken() {
-		// First, try environment variable
+		// First, try environment variables
 		String envToken = System.getenv("VERTEX_AI_ACCESS_TOKEN");
 		if (envToken != null && !envToken.isEmpty()) {
 			return envToken;
+		}
+
+		String googleAccessToken = System.getenv("GOOGLE_ACCESS_TOKEN");
+		if (googleAccessToken != null && !googleAccessToken.isEmpty()) {
+			return googleAccessToken;
 		}
 
 		// Second, try cached token from properties
@@ -115,15 +120,11 @@ public class VertexAiService {
 		);
 	}
 
-	// 3. Parse the complex nested JSON response from Vertex AI
+	// 3. Parse the response from Vertex AI generateContent API
+	// Format: { "candidates": [ { "content": { "parts": [ { "text": "..." } ] } } ] }
 	private String parseVertexResponse(Map<String, Object> responseMap) {
 		try {
-			List<Map<String, Object>> predictions = (List<Map<String, Object>>) responseMap.get("predictions");
-			if (predictions == null || predictions.isEmpty()) {
-				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
-			}
-			Map<String, Object> firstPrediction = predictions.get(0);
-			List<Map<String, Object>> candidates = (List<Map<String, Object>>) firstPrediction.get("candidates");
+			List<Map<String, Object>> candidates = (List<Map<String, Object>>) responseMap.get("candidates");
 			if (candidates == null || candidates.isEmpty()) {
 				return "আমি আপনার কথা ঠিক বুঝতে পারছি না।";
 			}
